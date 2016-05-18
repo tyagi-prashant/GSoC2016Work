@@ -1,3 +1,21 @@
+/*
+ * gnome-keyring
+ *
+ * Copyright (C) 2008 Stefan Walter
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as
+ * published by the Free Software Foundation; either version 2.1 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this program; if not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include "config.h"
 
@@ -47,6 +65,10 @@ enum {
 struct _GcrCertificateChooserDialog {
        GtkDialog parent;
        GtkWidget *notebook;
+       char *certificate_uri;
+       char *key_uri;
+       gboolean is_certificate_choosen;
+       gboolean is_key_choosen;
        GtkWidget *next_button;
        GtkWidget *previous_button;
        GtkWidget *page1_box;
@@ -71,33 +93,44 @@ struct _GcrCertificateChooserDialogClass {
 G_DEFINE_TYPE (GcrCertificateChooserDialog, gcr_certificate_chooser_dialog, GTK_TYPE_DIALOG);
 
 static void
+on_next_button_clicked(GtkWidget *widget, gpointer *data)
+{
+       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data); 
+}
+
+static void
 on_certificate_choosed(GcrViewerWidget *widget,
                GObject         *renderer,
                GcrParsed       *parsed,
                gpointer         *data)
-{       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
+{       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data); 
         GckAttributes *attributes;
 	GcrViewerWidget *viewer_widget = self->page1_viewer_widget;
 	GcrViewer *viewer = gcr_viewer_widget_get_viewer(viewer_widget);
-        gboolean is_viewer_contain_key = FALSE;
-        gboolean is_viewer_contain_certificate = FALSE;
-        guint num_of_renderer, i;
-        num_of_renderer = gcr_viewer_count_renderers (viewer);
-        gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
+        char *filename = gtk_file_chooser_get_preview_filename(self->page1_file_chooser);
+        if(g_strcmp0(self->certificate_uri,  filename) != 0)
+            self->is_certificate_choosen = FALSE;
+
+        if(g_strcmp0(self->key_uri,  filename) != 0)
+            self->is_key_choosen = FALSE;
+        
         gulong class;
-
-        for(i = 0; i < num_of_renderer; i++) {
-            attributes = gcr_renderer_get_attributes(renderer,i);
-
-            if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_CERTIFICATE)
-                is_viewer_contain_certificate = TRUE;
-            if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_PRIVATE_KEY)
-                is_viewer_contain_key = TRUE;
-        }
-        if(is_viewer_contain_certificate)
+        attributes = gcr_renderer_get_attributes(renderer);
+        
+        if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_CERTIFICATE) {
+            self->is_certificate_choosen = TRUE;
             gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), TRUE);
-}
+	    self->certificate_uri = filename;
 
+        }
+
+        if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_PRIVATE_KEY){
+            self->is_key_choosen = TRUE;
+	    self->key_uri = filename;
+
+        }
+}        
+       
 static void
 on_page1_update_preview(GtkWidget *widget, gpointer *data)
 {
@@ -167,10 +200,11 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
 	gtk_file_chooser_set_preview_widget(GTK_FILE_CHOOSER (self->page1_file_chooser), GTK_WIDGET (self->page1_viewer_widget));
         gtk_file_chooser_set_extra_widget(self->page1_file_chooser, self->next_button);
         gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
-        if(!gtk_file_chooser_get_preview_filename(self->page1_file_chooser))
+        if(!gtk_file_chooser_get_preview_filename(self->page1_file_chooser)) 
 	    gtk_file_chooser_set_preview_widget_active(self->page1_file_chooser, FALSE);
 
         g_signal_connect(GTK_WIDGET(self->page1_viewer_widget), "added", G_CALLBACK(on_certificate_choosed), self);
+        g_signal_connect(GTK_WIDGET(self->next_button), "clicked", G_CALLBACK(on_next_button_clicked), self);
 	gtk_widget_show_all(GTK_WIDGET (self));
 
         /*Page2 Construction */
@@ -184,6 +218,7 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
 	gtk_button_set_use_underline (GTK_BUTTON (button), TRUE);
 	gtk_dialog_set_default_response (GTK_DIALOG (self), GTK_RESPONSE_OK);
 */
+       
 	gtk_window_set_modal (GTK_WINDOW (self), TRUE);
 }
 
