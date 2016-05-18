@@ -29,7 +29,6 @@
 #include "gcr-viewer-widget.h"
 
 #include "egg/egg-secure-memory.h"
-
 #include <gtk/gtk.h>
 
 #include <glib/gi18n-lib.h>
@@ -66,6 +65,8 @@ enum {
 struct _GcrCertificateChooserDialog {
        GtkDialog parent;
        GtkWidget *notebook;
+       GtkWidget *next_button;
+       GtkWidget *previous_button;
        GtkWidget *page1_box;
        GtkWidget *page2_box;
        GtkWidget *page3_box;
@@ -88,12 +89,41 @@ struct _GcrCertificateChooserDialogClass {
 G_DEFINE_TYPE (GcrCertificateChooserDialog, gcr_certificate_chooser_dialog, GTK_TYPE_DIALOG);
 
 static void
+on_certificate_choosed(GcrViewerWidget *widget,
+               GObject         *renderer,
+               GcrParsed       *parsed,
+               gpointer         *data)
+{       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
+        GckAttributes *attributes;
+	GcrViewerWidget *viewer_widget = self->page1_viewer_widget;
+	GcrViewer *viewer = gcr_viewer_widget_get_viewer(viewer_widget);
+        gboolean is_viewer_contain_key = FALSE;
+        gboolean is_viewer_contain_certificate = FALSE;
+        guint num_of_renderer, i;
+        num_of_renderer = gcr_viewer_count_renderers (viewer);
+        gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
+        gulong class;
+
+        for(i = 0; i < num_of_renderer; i++) {
+            attributes = gcr_renderer_get_attributes(renderer,i);
+
+            if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_CERTIFICATE)
+                is_viewer_contain_certificate = TRUE;
+            if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_PRIVATE_KEY)
+                is_viewer_contain_key = TRUE;
+        }
+        if(is_viewer_contain_certificate)
+            gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), TRUE);
+}
+
+static void
 on_page1_update_preview(GtkWidget *widget, gpointer *data)
 {
 	GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
 	GtkFileChooser *chooser = GTK_FILE_CHOOSER(widget);
 	GcrViewerWidget *viewer_widget = self->page1_viewer_widget;
 	GcrViewer *viewer = gcr_viewer_widget_get_viewer(viewer_widget);
+        gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
 
 	while (gcr_viewer_count_renderers(viewer))
 		gcr_viewer_remove_renderer(viewer, gcr_viewer_get_renderer(viewer, 0));
@@ -102,7 +132,7 @@ on_page1_update_preview(GtkWidget *widget, gpointer *data)
 	if (!filename || g_file_test(filename, G_FILE_TEST_IS_DIR)) {
 		gtk_file_chooser_set_preview_widget_active(chooser, FALSE);
 		return;
-	}
+        }
 	printf("Preview %s\n", filename);
 	gcr_viewer_widget_load_file(viewer_widget, g_file_new_for_path(filename));
 	gtk_file_chooser_set_preview_widget_active(chooser, TRUE);
@@ -134,6 +164,7 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
 	gtk_file_filter_add_pattern (filefilter, "*.pfx");
 
         /*Page1 Construction */
+        self->next_button = gtk_button_new_with_label("Next");
         self->page1_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
         self->page1_stack = gtk_stack_new();
         self->page1_file_chooser = gtk_file_chooser_widget_new(GTK_FILE_CHOOSER_ACTION_OPEN);
@@ -141,9 +172,9 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
         gtk_stack_set_transition_type(GTK_STACK(self->page1_stack), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
         gtk_stack_set_transition_duration(GTK_STACK(self->page1_stack), 1000);
         gtk_container_set_border_width(GTK_CONTAINER(self->page1_box), 1);
-        gtk_notebook_append_page(GTK_NOTEBOOK(self->notebook), GTK_WIDGET(self->page1_box),GTK_WIDGET(gtk_label_new("Chooser a Key")));
+        gtk_notebook_append_page(GTK_NOTEBOOK(self->notebook), GTK_WIDGET(self->page1_box),GTK_WIDGET(gtk_label_new("Chooser a Certificate")));
         gtk_stack_add_titled(self->page1_stack, GTK_WIDGET(self->page1_file_chooser), "Files", "Chooser From File");
-        gtk_stack_add_titled(self->page1_stack, GTK_WIDGET(gtk_label_new("Chooser after some time :)")), "Pkcs#11", "Chooser From File");
+        gtk_stack_add_titled(self->page1_stack, GTK_WIDGET(gtk_label_new("Chooser after some time :)")), "Pkcs#11", "Chooser From PKCS#11");
         self->page1_stack_switcher = gtk_stack_switcher_new();
         gtk_stack_switcher_set_stack(self->page1_stack_switcher, self->page1_stack);
         gtk_box_pack_start(self->page1_box, self->page1_stack_switcher, TRUE, TRUE, 0);
@@ -152,9 +183,12 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
 
 	g_signal_connect(GTK_FILE_CHOOSER (self->page1_file_chooser), "update-preview", G_CALLBACK (on_page1_update_preview), self);
 	gtk_file_chooser_set_preview_widget(GTK_FILE_CHOOSER (self->page1_file_chooser), GTK_WIDGET (self->page1_viewer_widget));
+        gtk_file_chooser_set_extra_widget(self->page1_file_chooser, self->next_button);
+        gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
         if(!gtk_file_chooser_get_preview_filename(self->page1_file_chooser))
 	    gtk_file_chooser_set_preview_widget_active(self->page1_file_chooser, FALSE);
 
+        g_signal_connect(GTK_WIDGET(self->page1_viewer_widget), "added", G_CALLBACK(on_certificate_choosed), self);
 	gtk_widget_show_all(GTK_WIDGET (self));
 
         /*Page2 Construction */
@@ -162,12 +196,12 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
         /*Page3 Construction */
 
 	/* Add our various buttons */
-	button = gtk_dialog_add_button (GTK_DIALOG (self), _("_Cancel"), GTK_RESPONSE_CANCEL);
+	/*button = gtk_dialog_add_button (GTK_DIALOG (self), _("_Next"), GTK_RESPONSE_HELP);
 	gtk_button_set_use_underline (GTK_BUTTON (button), TRUE);
 	button = gtk_dialog_add_button (GTK_DIALOG (self), _("_OK"), GTK_RESPONSE_OK);
 	gtk_button_set_use_underline (GTK_BUTTON (button), TRUE);
 	gtk_dialog_set_default_response (GTK_DIALOG (self), GTK_RESPONSE_OK);
-
+*/
 	gtk_window_set_modal (GTK_WINDOW (self), TRUE);
 }
 
