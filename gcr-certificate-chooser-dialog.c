@@ -69,6 +69,7 @@ struct _GcrCertificateChooserDialog {
        char *key_uri;
        gboolean is_certificate_choosen;
        gboolean is_key_choosen;
+       GtkWidget *default_button;
        GtkWidget *next_button;
        GtkWidget *previous_button;
        GtkWidget *page1_box;
@@ -95,7 +96,29 @@ G_DEFINE_TYPE (GcrCertificateChooserDialog, gcr_certificate_chooser_dialog, GTK_
 static void
 on_next_button_clicked(GtkWidget *widget, gpointer *data)
 {
-       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data); 
+       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
+       gchar *fname = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER (self->page1_file_chooser));
+
+       printf("next-button %s\n", fname);
+       g_free(self->certificate_uri);
+       self->certificate_uri = fname;
+}
+
+static void
+on_default_button_clicked(GtkWidget *widget, gpointer *data)
+{
+       GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
+       gchar *fname = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER (self->page1_file_chooser));
+       printf("default-button %s\n", fname);
+
+       if (g_file_test(fname, G_FILE_TEST_IS_DIR)) {
+	       gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER (self->page1_file_chooser), fname);
+	       g_free(fname);
+       } else {
+	       /* This is used as a flag to the preview/added signals that this was *set* */
+	       self->certificate_uri = fname;
+	       gtk_file_chooser_set_filename(GTK_FILE_CHOOSER (self->page1_file_chooser), fname);
+       }
 }
 
 static void
@@ -108,20 +131,22 @@ on_certificate_choosed(GcrViewerWidget *widget,
 	GcrViewerWidget *viewer_widget = self->page1_viewer_widget;
 	GcrViewer *viewer = gcr_viewer_widget_get_viewer(viewer_widget);
         char *filename = gtk_file_chooser_get_preview_filename(self->page1_file_chooser);
-        if(g_strcmp0(self->certificate_uri,  filename) != 0)
-            self->is_certificate_choosen = FALSE;
 
         if(g_strcmp0(self->key_uri,  filename) != 0)
             self->is_key_choosen = FALSE;
-        
+        if (self->certificate_uri && g_strcmp0(self->certificate_uri, filename) != 0) {
+		g_free(self->certificate_uri);
+		self->certificate_uri = NULL;
+	}
         gulong class;
         attributes = gcr_renderer_get_attributes(renderer);
         
         if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_CERTIFICATE) {
             self->is_certificate_choosen = TRUE;
             gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), TRUE);
-	    self->certificate_uri = filename;
-
+	    if (self->certificate_uri)
+		    on_next_button_clicked(self->next_button, self);
+	    else printf("not set\n");
         }
 
         if (gck_attributes_find_ulong (attributes, CKA_CLASS, &class) && class == CKO_PRIVATE_KEY){
@@ -130,15 +155,35 @@ on_certificate_choosed(GcrViewerWidget *widget,
 
         }
 }        
-       
+
 static void
+on_page1_file_activated(GtkWidget *widget, gpointer *data)
+{
+	GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
+	GtkFileChooser *chooser = GTK_FILE_CHOOSER(widget);
+	GcrViewerWidget *viewer_widget = self->page1_viewer_widget;
+	GcrViewer *viewer = gcr_viewer_widget_get_viewer(viewer_widget);
+
+	/* The user might have hit Ctrl-L and typed in a filename, and this
+	   happens when they press Enter. It also happens when they double
+	   click a file in the browser. */
+	gchar *fname = gtk_file_chooser_get_filename(chooser);
+	gtk_file_chooser_set_filename(chooser, fname);
+	printf("fname chosen: %s\n", fname);
+	g_free(fname);
+
+	/* if Next button activated, then behave as if it's pressed */
+}
+
+	static void
 on_page1_update_preview(GtkWidget *widget, gpointer *data)
 {
 	GcrCertificateChooserDialog *self = GCR_CERTIFICATE_CHOOSER_DIALOG (data);
 	GtkFileChooser *chooser = GTK_FILE_CHOOSER(widget);
 	GcrViewerWidget *viewer_widget = self->page1_viewer_widget;
 	GcrViewer *viewer = gcr_viewer_widget_get_viewer(viewer_widget);
-        gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
+
+	gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
 
 	while (gcr_viewer_count_renderers(viewer))
 		gcr_viewer_remove_renderer(viewer, gcr_viewer_get_renderer(viewer, 0));
@@ -148,6 +193,11 @@ on_page1_update_preview(GtkWidget *widget, gpointer *data)
 		gtk_file_chooser_set_preview_widget_active(chooser, FALSE);
 		return;
         }
+	if (self->certificate_uri && g_strcmp0(self->certificate_uri, filename) != 0) {
+		g_free(self->certificate_uri);
+		self->certificate_uri = NULL;
+	}
+
 	printf("Preview %s\n", filename);
 	gcr_viewer_widget_load_file(viewer_widget, g_file_new_for_path(filename));
 	gtk_file_chooser_set_preview_widget_active(chooser, TRUE);
@@ -179,6 +229,10 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
 	gtk_file_filter_add_pattern (filefilter, "*.pfx");
 
         /*Page1 Construction */
+	self->default_button = gtk_button_new();
+	g_signal_connect(GTK_WIDGET(self->default_button), "clicked", G_CALLBACK(on_default_button_clicked), self);
+        gtk_container_add(GTK_CONTAINER(content), self->default_button);
+	
         self->next_button = gtk_button_new_with_label("Next");
         self->page1_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
         self->page1_stack = gtk_stack_new();
@@ -197,15 +251,19 @@ gcr_certificate_chooser_dialog_constructed (GObject *obj)
 	self->page1_viewer_widget = gcr_viewer_widget_new();
 
 	g_signal_connect(GTK_FILE_CHOOSER (self->page1_file_chooser), "update-preview", G_CALLBACK (on_page1_update_preview), self);
+	g_signal_connect(GTK_FILE_CHOOSER (self->page1_file_chooser), "file-activated", G_CALLBACK (on_page1_file_activated), self);
 	gtk_file_chooser_set_preview_widget(GTK_FILE_CHOOSER (self->page1_file_chooser), GTK_WIDGET (self->page1_viewer_widget));
         gtk_file_chooser_set_extra_widget(self->page1_file_chooser, self->next_button);
-        gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
+	gtk_widget_set_sensitive(GTK_WIDGET(self->next_button), FALSE);
         if(!gtk_file_chooser_get_preview_filename(self->page1_file_chooser)) 
 	    gtk_file_chooser_set_preview_widget_active(self->page1_file_chooser, FALSE);
 
         g_signal_connect(GTK_WIDGET(self->page1_viewer_widget), "added", G_CALLBACK(on_certificate_choosed), self);
         g_signal_connect(GTK_WIDGET(self->next_button), "clicked", G_CALLBACK(on_next_button_clicked), self);
 	gtk_widget_show_all(GTK_WIDGET (self));
+	gtk_widget_hide(GTK_WIDGET(self->default_button));
+	gtk_widget_set_can_default(GTK_WIDGET(self->default_button), TRUE);
+	gtk_widget_grab_default(GTK_WIDGET(self->default_button));
 
         /*Page2 Construction */
 
